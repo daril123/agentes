@@ -116,34 +116,79 @@ def generate_index(info: str) -> str:
             "10. Normativas y estándares aplicables\n"
             "11. Experiencia relevante en proyectos similares\n"
             "12. Anexos técnicos\n\n"
-            "Devuelve la respuesta únicamente en formato JSON sin ningún texto adicional.\n\n"
+            "Devuelve la respuesta únicamente en formato JSON sin ningún texto adicional, sin tags <think>, sin comentarios y sin explicaciones.\n\n"
             "Información:\n"
             f"{info}\n\n"
-            "Responde en formato JSON. Es sumamente urgente que estructures esto en formato json "
+            "Responde en formato JSON con esta estructura ejemplo:\n"
+            "{\n"
+            "  \"introduccion\": \"Descripción de esta sección...\",\n"
+            "  \"objetivos\": \"Descripción de esta sección...\",\n"
+            "  ...\n"
+            "}\n\n"
+            "IMPORTANTE: Responde SOLAMENTE con el JSON, sin ningún otro texto"
         )
         
         response = llm.invoke(prompt)
 
-        # Limpiar la respuesta si contiene delimitadores de código
+        # Limpieza agresiva para eliminar todo excepto el JSON
+        # 1. Eliminar tags <think> y </think>
+        response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+        response = re.sub(r'<think>.*', '', response, flags=re.DOTALL)  # Por si no hay tag de cierre
+        
+        # 2. Eliminar cualquier texto antes de la primera llave de apertura
+        response = re.sub(r'^[^{]*', '', response)
+        
+        # 3. Eliminar cualquier texto después de la última llave de cierre
+        response = re.sub(r'[^}]*$', '', response)
+        
+        # 4. Limpiar la respuesta si contiene delimitadores de código
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0].strip()
         elif "```" in response:
             response = response.split("```")[1].split("```")[0].strip()
 
+        # Registrar para depuración
+        logger.info(f"Respuesta limpia: {response[:200]}...")
+        
         # Validar que sea un JSON válido
         try:
             json_response = json.loads(response)
             response = json.dumps(json_response)
-        except json.JSONDecodeError:
-            logger.warning("La respuesta no es un JSON válido. Intentando reparar...")
+            logger.info("JSON válido confirmado")
+        except json.JSONDecodeError as e:
+            logger.warning(f"La respuesta no es un JSON válido. Intentando reparar... Error: {str(e)}")
+            
             # Intentar reparar JSON
             response = re.sub(r',\s*}', '}', response)
             response = re.sub(r',\s*]', ']', response)
+            
             # Asegurar que esté entre llaves
             if not response.strip().startswith("{"):
                 response = "{" + response
             if not response.strip().endswith("}"):
                 response = response + "}"
+            
+            # Si todo falla, crear un índice predeterminado
+            try:
+                json.loads(response)  # Intentar de nuevo después de la reparación
+            except json.JSONDecodeError:
+                logger.warning("Reparación fallida. Generando índice predeterminado.")
+                
+                # Generar un índice predeterminado
+                default_index = {
+                    "introduccion": "Introducción y contexto del proyecto",
+                    "objetivos": "Objetivos generales y específicos del proyecto",
+                    "alcance_trabajo": "Alcance detallado del trabajo a realizar",
+                    "metodologia": "Metodología propuesta para el desarrollo del proyecto",
+                    "plan_trabajo_cronograma": "Plan de trabajo y cronograma de actividades",
+                    "entregables": "Entregables con descripción detallada",
+                    "recursos_humanos_tecnicos": "Recursos humanos y técnicos asignados",
+                    "gestion_riesgos": "Gestión de riesgos del proyecto",
+                    "plan_calidad": "Plan de calidad del proyecto"
+                }
+                
+                response = json.dumps(default_index)
+                logger.info("Índice predeterminado generado con éxito")
             
         logger.info(f"Índice generado: {response[:200]}...")
         
@@ -164,4 +209,18 @@ def generate_index(info: str) -> str:
             error_message
         )
         
-        return f"Error: {error_message}"
+        # Si hay un error, generamos un índice predeterminado en lugar de fallar
+        default_index = {
+            "introduccion": "Introducción y contexto del proyecto",
+            "objetivos": "Objetivos generales y específicos del proyecto",
+            "alcance_trabajo": "Alcance detallado del trabajo a realizar",
+            "metodologia": "Metodología propuesta para el desarrollo del proyecto",
+            "plan_trabajo_cronograma": "Plan de trabajo y cronograma de actividades",
+            "entregables": "Entregables con descripción detallada",
+            "recursos_humanos_tecnicos": "Recursos humanos y técnicos asignados",
+            "gestion_riesgos": "Gestión de riesgos del proyecto",
+            "plan_calidad": "Plan de calidad del proyecto"
+        }
+        
+        logger.info("Generando índice predeterminado debido al error")
+        return json.dumps(default_index)

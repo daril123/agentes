@@ -10,6 +10,8 @@ from langchain_core.tools import tool
 from core.execution_tracker import add_to_execution_path
 from llm.model import get_llm
 import re
+from tools.reference_tools import find_similar_proposals
+
 # Configuración del logger
 logger = logging.getLogger("TDR_Agente_LangGraph")
 
@@ -42,6 +44,9 @@ def generate_section(params: str) -> str:
             f"Redactando sección: {section_name}"
         )
         
+        # Buscar propuestas similares para obtener contexto
+        context = get_similar_proposals_context(section_name, info)
+        
         # Guía específica según el tipo de sección (según PKS-537 RQ-01)
         section_guidance = {
             "Introducción": "Proporciona contexto del proyecto, antecedentes y justificación. Describe brevemente el problema que se va a resolver.",
@@ -73,6 +78,15 @@ def generate_section(params: str) -> str:
             f"{specific_guidance}"
             "Adicionalmente, toma en cuenta la siguiente información extraída del TDR:\n"
             f"{info}\n\n"
+        )
+        
+        # Añadir contexto de propuestas similares si existe
+        if context:
+            prompt += "### Contexto de propuestas similares anteriores:\n"
+            prompt += context + "\n\n"
+            prompt += "Usa este contexto como inspiración, pero personaliza el contenido para este proyecto específico.\n\n"
+        
+        prompt += (
             "Responde con el texto de la sección en formato profesional y detallado. "
             "Usa lenguaje técnico apropiado y estructura el contenido en párrafos claros. "
             "La extensión debe ser proporcional a la importancia de la sección. "
@@ -103,6 +117,51 @@ def generate_section(params: str) -> str:
         )
         
         return f"Error en sección {section_name}: {error_message}"
+
+def get_similar_proposals_context(section_name: str, tdr_info: str) -> str:
+    """
+    Obtiene contexto de propuestas similares para la sección actual.
+    
+    Args:
+        section_name: Nombre de la sección
+        tdr_info: Información extraída del TDR
+        
+    Returns:
+        Texto con contexto de propuestas similares o cadena vacía si no hay
+    """
+    try:
+        # Preparar parámetros para buscar propuestas similares
+        search_params = json.dumps({
+            "section_name": section_name,
+            "tdr_info": tdr_info
+        })
+        
+        # Buscar propuestas similares
+        similar_proposals_json = find_similar_proposals(search_params)
+        similar_proposals = json.loads(similar_proposals_json)
+        
+        if similar_proposals.get("status") != "success" or not similar_proposals.get("proposals"):
+            logger.info(f"No se encontraron propuestas similares para la sección: {section_name}")
+            return ""
+        
+        # Construir el contexto a partir de las propuestas encontradas
+        context_parts = []
+        for i, prop in enumerate(similar_proposals.get("proposals", [])):
+            if prop.get("section_content"):
+                context_parts.append(
+                    f"### Ejemplo {i+1} - Proyecto: {prop.get('project_name', 'N/A')} (Código: {prop.get('project_code', 'N/A')})\n"
+                    f"{prop.get('section_content', '')}\n"
+                )
+        
+        # Limitar el tamaño total del contexto
+        context = "\n".join(context_parts)
+        if len(context) > 7000:  # Limitar a 7000 caracteres para evitar problemas con el tamaño del prompt
+            context = context[:7000] + "...\n[Contexto truncado por tamaño]"
+        
+        return context
+    except Exception as e:
+        logger.error(f"Error al obtener contexto de propuestas similares: {str(e)}", exc_info=True)
+        return ""
 
 @tool
 def combine_sections(params_str: str) -> str:

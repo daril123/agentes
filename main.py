@@ -15,16 +15,42 @@ y recibir propuestas técnicas generadas automáticamente.
 """
 
 import logging
+import json
 from config.settings import configure_logging
 from telegram_bot.bot import start_bot
+from tools.setup_tools import setup_project_directories, check_reference_excel_exists
 
 # Configurar logging
 logger = configure_logging()
+
+def initialize_environment():
+    """Inicializa el entorno del proyecto"""
+    logger.info("Inicializando entorno del proyecto")
+    
+    # Crear estructura de directorios
+    setup_result = setup_project_directories()
+    logger.info(setup_result)
+    
+    # Verificar Excel de referencias
+    excel_check = check_reference_excel_exists()
+    try:
+        excel_data = json.loads(excel_check)
+        if excel_data.get("file_exists", False):
+            logger.info(f"Excel de referencias verificado: {excel_data.get('file_path')}")
+        else:
+            logger.warning(f"Advertencia: {excel_data.get('message')}")
+            logger.warning("La herramienta de contexto para propuestas similares podría no funcionar correctamente.")
+    except:
+        logger.warning(f"No se pudo verificar el archivo Excel de referencias: {excel_check}")
 
 def main():
     """Función principal para iniciar el sistema"""
     try:
         logger.info("Iniciando el sistema TDR Agente Multiagente")
+        
+        # Inicializar entorno
+        initialize_environment()
+        
         # Iniciar el bot de Telegram
         start_bot()
     except Exception as e:

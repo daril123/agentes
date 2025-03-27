@@ -65,7 +65,10 @@ def generate_sections_node(state: TDRAgentState) -> TDRAgentState:
         "description": section_description,
         "info": tdr_info
     })
+    
+    # Llamar a la herramienta de generación con contexto de propuestas similares
     section_content = generate_section(params)
+    
     if section_content.startswith("Error:"):
         logger.error(f"Error al generar sección {section_name}: {section_content}")
         state["messages"].append(AIMessage(content=section_content))

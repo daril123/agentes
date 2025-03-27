@@ -40,16 +40,20 @@ def generate_index_node(state: TDRAgentState) -> TDRAgentState:
         state["next_step"] = "end"
         return state
     
-    # Generar el índice
-    index_str = generate_index(tdr_info)
-    if index_str.startswith("Error:"):
-        logger.error(f"Error al generar índice: {index_str}")
-        state["messages"].append(AIMessage(content=index_str))
-        state["next_step"] = "end"
-        return state
+    # Limpiamos tags <think> y </think> de la información del TDR
+    # Esto puede ayudar si el problema está también en la entrada
+    tdr_info_clean = re.sub(r'<think>.*?</think>', '', tdr_info, flags=re.DOTALL)
+    tdr_info_clean = re.sub(r'<think>.*', '', tdr_info_clean, flags=re.DOTALL)  # Por si no hay tag de cierre
+    
+    if tdr_info_clean.strip() == "":
+        # Si al limpiar quedó vacío, usamos el original
+        tdr_info_clean = tdr_info
+    
+    # Generar el índice con la información limpia
+    index_str = generate_index(tdr_info_clean)
     
     try:
-        # Convertir el índice a diccionario
+        # Intentar convertir el índice a diccionario
         index_dict = json.loads(index_str)
         
         # Guardar el índice en el estado
@@ -78,34 +82,95 @@ def generate_index_node(state: TDRAgentState) -> TDRAgentState:
         
         # Intentar reparar el JSON antes de fallar
         try:
+            # Limpieza avanzada del JSON
+            # Eliminar tags <think> y </think>
+            fixed_index_str = re.sub(r'<think>.*?</think>', '', index_str, flags=re.DOTALL)
+            fixed_index_str = re.sub(r'<think>.*', '', fixed_index_str, flags=re.DOTALL)  # Por si no hay tag de cierre
+            
+            # Eliminar cualquier texto antes de la primera llave de apertura
+            fixed_index_str = re.sub(r'^[^{]*', '', fixed_index_str)
+            
+            # Eliminar cualquier texto después de la última llave de cierre
+            fixed_index_str = re.sub(r'[^}]*$', '', fixed_index_str)
+            
             # Limpieza básica de JSON
-            fixed_index_str = re.sub(r',\s*}', '}', index_str)
+            fixed_index_str = re.sub(r',\s*}', '}', fixed_index_str)
             fixed_index_str = re.sub(r',\s*]', ']', fixed_index_str)
             
             # Intentar cargar el JSON reparado
-            index_dict = json.loads(fixed_index_str)
+            try:
+                index_dict = json.loads(fixed_index_str)
+                
+                # Si llegamos aquí, la reparación funcionó
+                logger.info("JSON reparado exitosamente")
+                state["index"] = index_dict
+                state["sections"] = []
+                state["current_section_index"] = 0
+                
+                section_names = list(index_dict.keys())
+                index_summary = ", ".join(section_names[:5])
+                if len(section_names) > 5:
+                    index_summary += f", y {len(section_names) - 5} más"
+                
+                state["messages"].append(AIMessage(content=f"Índice reparado y generado con las siguientes secciones: {index_summary}"))
+                
+                # Siguiente paso
+                state["next_step"] = "generate_sections"
+                
+            except json.JSONDecodeError:
+                # Si aún falla, crear un índice predeterminado
+                logger.warning("Reparación del JSON fallida. Creando índice predeterminado.")
+                
+                default_index = {
+                    "introduccion": "Introducción y contexto del proyecto",
+                    "objetivos": "Objetivos generales y específicos del proyecto",
+                    "alcance_trabajo": "Alcance detallado del trabajo a realizar",
+                    "metodologia": "Metodología propuesta para el desarrollo del proyecto",
+                    "plan_trabajo_cronograma": "Plan de trabajo y cronograma de actividades",
+                    "entregables": "Entregables con descripción detallada",
+                    "recursos_humanos_tecnicos": "Recursos humanos y técnicos asignados",
+                    "gestion_riesgos": "Gestión de riesgos del proyecto",
+                    "plan_calidad": "Plan de calidad del proyecto"
+                }
+                
+                state["index"] = default_index
+                state["sections"] = []
+                state["current_section_index"] = 0
+                
+                section_names = list(default_index.keys())
+                index_summary = ", ".join(section_names)
+                
+                state["messages"].append(AIMessage(content=f"Se ha creado un índice predeterminado con las siguientes secciones: {index_summary}"))
+                
+                # Siguiente paso
+                state["next_step"] = "generate_sections"
+        except Exception as e2:
+            # Si todo falla, crear un índice predeterminado
+            logger.error(f"Error al intentar reparar el JSON: {str(e2)}")
             
-            # Si llegamos aquí, la reparación funcionó
-            logger.info("JSON reparado exitosamente")
-            state["index"] = index_dict
+            default_index = {
+                "introduccion": "Introducción y contexto del proyecto",
+                "objetivos": "Objetivos generales y específicos del proyecto",
+                "alcance_trabajo": "Alcance detallado del trabajo a realizar",
+                "metodologia": "Metodología propuesta para el desarrollo del proyecto",
+                "plan_trabajo_cronograma": "Plan de trabajo y cronograma de actividades",
+                "entregables": "Entregables con descripción detallada",
+                "recursos_humanos_tecnicos": "Recursos humanos y técnicos asignados",
+                "gestion_riesgos": "Gestión de riesgos del proyecto",
+                "plan_calidad": "Plan de calidad del proyecto"
+            }
+            
+            state["index"] = default_index
             state["sections"] = []
             state["current_section_index"] = 0
             
-            section_names = list(index_dict.keys())
-            index_summary = ", ".join(section_names[:5])
-            if len(section_names) > 5:
-                index_summary += f", y {len(section_names) - 5} más"
+            section_names = list(default_index.keys())
+            index_summary = ", ".join(section_names)
             
-            state["messages"].append(AIMessage(content=f"Índice reparado y generado con las siguientes secciones: {index_summary}"))
+            state["messages"].append(AIMessage(content=f"Se ha creado un índice predeterminado con las siguientes secciones: {index_summary}"))
             
             # Siguiente paso
             state["next_step"] = "generate_sections"
-            
-        except Exception as e2:
-            # Si la reparación también falla, entonces terminamos
-            logger.error(f"Error al intentar reparar el JSON: {str(e2)}")
-            state["messages"].append(AIMessage(content=f"Error: {error_message}"))
-            state["next_step"] = "end"
     
     logger.info(f"Estado después de generate_index_node: {format_state_for_log(state)}")
     return state
