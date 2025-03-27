@@ -28,7 +28,7 @@ class TDRAgentState(TypedDict):
     current_section_index: Optional[int]  # Índice de la sección actual que se está generando
 
 
-def format_state_for_log(state):
+def format_state_for_log(state): 
     """
     Formatea el estado del agente para mostrar en logs.
     
