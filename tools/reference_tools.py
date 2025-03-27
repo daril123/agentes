@@ -214,12 +214,18 @@ def read_reference_excel(excel_path: str) -> pd.DataFrame:
         DataFrame con la información de propuestas anteriores
     """
     try:
-        # Leer el Excel - intentar leer la página 3 primero
+        # Leer el Excel - leer específicamente la primera página llamada "PRUEBA 1"
         try:
-            df = pd.read_excel(excel_path, sheet_name=2)  # 0-indexed, así que sheet 3 es index 2
+            # Intenta leer por nombre de hoja
+            df = pd.read_excel(excel_path, sheet_name="PRUEBA 1")
+            logger.info(f"Lectura exitosa de la hoja 'PRUEBA 1' en {excel_path}")
         except:
-            # Si falla, intentar leer la primera página
-            df = pd.read_excel(excel_path)
+            # Si no encuentra por nombre, leer la primera hoja (índice 0)
+            df = pd.read_excel(excel_path, sheet_name=0)
+            logger.info(f"Lectura exitosa de la primera hoja en {excel_path}")
+            
+        # Registrar las columnas encontradas para depuración
+        logger.info(f"Columnas encontradas en Excel: {df.columns.tolist()}")
         
         return df
     except Exception as e:
@@ -240,74 +246,94 @@ def find_matching_proposals(references: pd.DataFrame, keywords: list) -> list:
     matching_proposals = []
     
     # Verificar las columnas disponibles
-    expected_columns = ["codigo_proyecto", "nombre_proyecto", "palabras_clave", "ruta_archivo"]
     available_columns = references.columns.tolist()
+    logger.info(f"Columnas disponibles en el Excel: {available_columns}")
     
-    # Mapear columnas reales a columnas esperadas
-    column_mapping = {}
-    for exp_col in expected_columns:
-        # Buscar coincidencia exacta
-        if exp_col in available_columns:
-            column_mapping[exp_col] = exp_col
+    # Buscar la columna que contiene el código del proyecto
+    codigo_col = None
+    for col in available_columns:
+        if "código" in col.lower() or "codigo" in col.lower() or "project" in col.lower():
+            codigo_col = col
+            break
+    
+    # Si no encontramos una columna con ese nombre, usar la segunda columna
+    # (típicamente, la primera puede ser un índice o numeración y la segunda el código)
+    if not codigo_col and len(available_columns) > 1:
+        codigo_col = available_columns[1]
+        logger.info(f"Usando columna alternativa para códigos: {codigo_col}")
+    
+    # Si aún no tenemos una columna, usar la primera disponible
+    if not codigo_col and available_columns:
+        codigo_col = available_columns[0]
+        logger.info(f"Usando primera columna disponible: {codigo_col}")
+    
+    # Si no hay columnas, no podemos continuar
+    if not codigo_col:
+        logger.warning("No se encontraron columnas en el Excel")
+        return []
+    
+    logger.info(f"Columna seleccionada para códigos de proyecto: {codigo_col}")
+    
+    # Iterar por las filas del DataFrame
+    for index, row in references.iterrows():
+        # Obtener el código del proyecto
+        project_code = str(row.get(codigo_col, "")).strip()
+        
+        # Si el código está vacío, continuamos con la siguiente fila
+        if not project_code:
             continue
         
-        # Buscar coincidencia parcial (ignorando mayúsculas/minúsculas)
-        exp_col_lower = exp_col.lower()
-        for col in available_columns:
-            if exp_col_lower in col.lower():
-                column_mapping[exp_col] = col
-                break
-    
-    # Si no se encontraron las columnas principales, salir
-    required_columns = ["codigo_proyecto", "nombre_proyecto", "ruta_archivo"]
-    for col in required_columns:
-        if col not in column_mapping:
-            logger.warning(f"Columna requerida no encontrada: {col}")
-            return []
-    
-    # Convertir a lista de diccionarios para procesamiento
-    proposals = references.to_dict(orient='records')
-    
-    for prop in proposals:
+        # Calcular una puntuación basada en coincidencias con palabras clave
         score = 0
+        project_code_lower = project_code.lower()
         
-        # Verificar coincidencia en código de proyecto
-        project_code = str(prop.get(column_mapping.get("codigo_proyecto", ""), "")).lower()
-        if project_code:
-            for keyword in keywords:
-                if keyword in project_code:
-                    score += 5  # Mayor peso para coincidencias en código
+        for keyword in keywords:
+            keyword_lower = keyword.lower()
+            if keyword_lower in project_code_lower:
+                score += 5  # Alta puntuación para coincidencias en el código
         
-        # Verificar coincidencia en nombre de proyecto
-        project_name = str(prop.get(column_mapping.get("nombre_proyecto", ""), "")).lower()
-        if project_name:
-            for keyword in keywords:
-                if keyword in project_name:
-                    score += 3  # Peso medio para coincidencias en nombre
+        # Si no hay palabras clave o son muy genéricas, asignar una puntuación mínima
+        if not keywords or score == 0:
+            score = 1
         
-        # Verificar coincidencia en palabras clave si existe la columna
-        if "palabras_clave" in column_mapping:
-            keyword_field = str(prop.get(column_mapping.get("palabras_clave", ""), "")).lower()
-            if keyword_field:
-                for keyword in keywords:
-                    if keyword in keyword_field:
-                        score += 2  # Peso menor para coincidencias en palabras clave
-        
-        # Si hay suficiente coincidencia, añadir a la lista
-        if score > 0:
-            matched_prop = {
-                "codigo_proyecto": prop.get(column_mapping.get("codigo_proyecto", ""), ""),
-                "nombre_proyecto": prop.get(column_mapping.get("nombre_proyecto", ""), ""),
-                "ruta_archivo": prop.get(column_mapping.get("ruta_archivo", ""), ""),
-                "similarity_score": score
-            }
-            matching_proposals.append(matched_prop)
+        # Crear propuesta si hay un código
+        matched_prop = {
+            "codigo_proyecto": project_code,
+            "nombre_proyecto": str(row.get("Nombre del propyecto", "")) if "Nombre del propyecto" in row else "Propuesta " + project_code,
+            "ruta_archivo": "",  # No usamos ruta del Excel, buscaremos por código
+            "similarity_score": score
+        }
+        matching_proposals.append(matched_prop)
     
     # Ordenar por puntuación de similitud (mayor a menor)
     matching_proposals.sort(key=lambda x: x["similarity_score"], reverse=True)
     
     # Limitar a las 5 propuestas más relevantes
     return matching_proposals[:5]
+
+def find_best_column_match(available_columns, candidates):
+    """
+    Encuentra la mejor coincidencia para una columna entre las candidatas.
+    
+    Args:
+        available_columns: Lista de columnas disponibles
+        candidates: Lista de posibles nombres para la columna
+        
+    Returns:
+        Nombre de la columna que mejor coincide o None si no hay coincidencia
+    """
+    # Primero buscar coincidencia exacta
+    for col in available_columns:
+        if col.lower() in [c.lower() for c in candidates]:
+            return col
+    
+    # Si no hay coincidencia exacta, buscar coincidencia parcial
+    for col in available_columns:
+        for candidate in candidates:
+            if candidate.lower() in col.lower() or col.lower() in candidate.lower():
+                return col
+    
+    return None
 
 def extract_proposal_content(proposal: dict, section_name: str) -> str:
     """
@@ -321,62 +347,169 @@ def extract_proposal_content(proposal: dict, section_name: str) -> str:
         Contenido extraído para la sección o cadena vacía si no se encuentra
     """
     try:
-        # Construir la ruta al archivo de propuesta
-        project_code = proposal.get("codigo_proyecto", "")
-        file_path = proposal.get("ruta_archivo", "")
+        # Obtener el código del proyecto
+        project_code = str(proposal.get("codigo_proyecto", "")).strip()
+        logger.info(f"Buscando contenido para proyecto con código: {project_code}")
         
-        # Si la ruta no es absoluta, construirla relativa al directorio de propuestas
-        if not os.path.isabs(file_path):
-            file_path = os.path.join(PROPOSALS_DIR, file_path)
-        
-        # Si no existe, buscar por código de proyecto
-        if not os.path.exists(file_path):
-            # Buscar archivos que contengan el código de proyecto
-            potential_files = []
-            
-            if os.path.exists(PROPOSALS_DIR):
-                for root, dirs, files in os.walk(PROPOSALS_DIR):
-                    for file in files:
-                        if project_code in file and (file.endswith('.txt') or file.endswith('.md')):
-                            potential_files.append(os.path.join(root, file))
-            
-            if not potential_files:
-                logger.warning(f"No se encontraron archivos para el código de proyecto: {project_code}")
-                return ""
-            
-            # Usar el primer archivo encontrado
-            file_path = potential_files[0]
-        
-        # Verificar si el archivo existe
-        if not os.path.exists(file_path):
-            logger.warning(f"Archivo de propuesta no encontrado: {file_path}")
+        # Si el código está vacío, no podemos continuar
+        if not project_code or project_code == "UNKNOWN":
+            logger.warning("Código de proyecto vacío o desconocido")
             return ""
         
-        # Leer el contenido del archivo
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
+        # Usar únicamente la ruta específica a la carpeta de Propuestas
+        base_path = PROPOSALS_DIR  # Esta variable ya está definida como Path("documentos/Propuestas")
         
-        # Buscar la sección específica en el contenido
-        section_pattern = get_section_pattern(section_name)
-        
-        # Intentar encontrar la sección
-        section_content = ""
-        match = re.search(section_pattern, content, re.IGNORECASE | re.DOTALL)
-        
-        if match:
-            section_content = match.group(1).strip()
+        if not os.path.exists(base_path):
+            logger.warning(f"La carpeta de propuestas no existe: {base_path}")
+            return ""
             
-            # Limitar el contenido a un tamaño razonable (5000 caracteres)
-            if len(section_content) > 5000:
-                section_content = section_content[:5000] + "..."
+        logger.info(f"Buscando en directorio: {base_path}")
+        
+        # Buscar archivos que contengan el código de proyecto
+        potential_files = []
+        
+        # Búsqueda en la carpeta de propuestas
+        for item in os.listdir(base_path):
+            item_path = os.path.join(base_path, item)
+            
+            # Solo considerar archivos, no directorios
+            if os.path.isfile(item_path):
+                # Comprobar si el código está en el nombre del archivo
+                if project_code.lower() in item.lower():
+                    logger.info(f"Archivo encontrado que coincide con código {project_code}: {item_path}")
+                    potential_files.append(item_path)
+        
+        if not potential_files:
+            logger.warning(f"No se encontraron archivos para el código de proyecto: {project_code}")
+            return ""
+        
+        # Ordenar por tipo de archivo (.txt primero)
+        def file_priority(file_path):
+            if file_path.endswith('.txt'):
+                return 0
+            elif file_path.endswith('.md'):
+                return 1
+            elif file_path.endswith('.pdf'):
+                return 2
+            else:
+                return 3
+        
+        potential_files.sort(key=file_priority)
+        
+        # Usar el primer archivo encontrado después de ordenar
+        file_path = potential_files[0]
+        logger.info(f"Usando archivo de mayor prioridad: {file_path}")
+        
+        # Verificar si es un PDF
+        if file_path.lower().endswith('.pdf'):
+            try:
+                from tools.pdf_tools import extract_text_from_pdf
+                content = extract_text_from_pdf(file_path)
+                if content.startswith("Error:"):
+                    logger.error(f"Error extrayendo texto del PDF: {content}")
+                    return ""
+                logger.info(f"Texto extraído exitosamente del PDF: {len(content)} caracteres")
+            except Exception as e:
+                logger.error(f"Error al procesar PDF: {str(e)}")
+                return ""
+        else:
+            # Leer el contenido del archivo para formatos de texto
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                logger.info(f"Archivo leído exitosamente: {len(content)} caracteres")
+            except Exception as e:
+                logger.error(f"Error al leer archivo: {str(e)}")
+                return ""
+        
+        # Buscar la sección específica utilizando un enfoque más simple
+        section_content = extract_section_by_patterns(content, section_name)
+        if section_content:
+            logger.info(f"Sección '{section_name}' encontrada: {len(section_content)} caracteres")
         else:
             logger.warning(f"Sección '{section_name}' no encontrada en {file_path}")
-        
+            
         return section_content
     
     except Exception as e:
         logger.error(f"Error al extraer contenido de propuesta: {str(e)}", exc_info=True)
         return ""
+
+def extract_section_by_patterns(content: str, section_name: str) -> str:
+    """
+    Extrae una sección específica del contenido utilizando patrones predefinidos.
+    
+    Args:
+        content: Contenido del documento
+        section_name: Nombre de la sección a buscar
+        
+    Returns:
+        Contenido de la sección o cadena vacía si no se encuentra
+    """
+    # Normalizar el texto para búsqueda
+    section_name_lower = section_name.lower()
+    content_lower = content.lower()
+    
+    # Lista de patrones para buscar la sección (de más específico a más general)
+    patterns = [
+        # Patrón de título con número (ej: "2. Objetivos")
+        rf'\n\s*\d+\.\s*{re.escape(section_name_lower)}[^\n]*\n(.*?)(?:\n\s*\d+\.\s|\Z)',
+        
+        # Patrón de título con hashtags (formato markdown)
+        rf'\n\s*#+\s*{re.escape(section_name_lower)}[^\n]*\n(.*?)(?:\n\s*#+\s|\Z)',
+        
+        # Patrón de título en mayúsculas
+        rf'\n\s*{re.escape(section_name_lower.upper())}[^\n]*\n(.*?)(?:\n\s*[A-Z][A-Z\s]+|\Z)',
+        
+        # Patrón de título simple
+        rf'\n\s*{re.escape(section_name_lower)}[^\n]*\n(.*?)(?:\n\s*[a-zA-Z]+\s*(?:\:|\.)|\Z)'
+    ]
+    
+    # Probar cada patrón
+    for pattern in patterns:
+        try:
+            match = re.search(pattern, content_lower, re.DOTALL | re.IGNORECASE)
+            if match and match.group(1):
+                # Encontrar índices en el texto original
+                start_idx = content_lower.find(match.group(1))
+                if start_idx >= 0:
+                    # Extraer el texto del contenido original para preservar mayúsculas/minúsculas
+                    section_text = content[start_idx:start_idx + len(match.group(1))].strip()
+                    
+                    # Limitar longitud si es necesario
+                    if len(section_text) > 5000:
+                        section_text = section_text[:5000] + "..."
+                    
+                    return section_text
+        except Exception as e:
+            logger.warning(f"Error con patrón regex: {str(e)}")
+    
+    # Si llegamos aquí, no encontramos la sección con los patrones predefinidos
+    # Intentar una búsqueda más simple
+    try:
+        # Encontrar párrafos que contengan el nombre de la sección
+        paragraphs = re.split(r'\n\s*\n', content)
+        relevant_paragraphs = []
+        
+        for para in paragraphs:
+            para_lower = para.lower()
+            if section_name_lower in para_lower:
+                relevant_paragraphs.append(para)
+        
+        if relevant_paragraphs:
+            # Unir los párrafos relevantes (máximo 3)
+            section_text = "\n\n".join(relevant_paragraphs[:3])
+            
+            # Limitar longitud
+            if len(section_text) > 5000:
+                section_text = section_text[:5000] + "..."
+                
+            return section_text
+    except Exception as e:
+        logger.warning(f"Error en búsqueda alternativa: {str(e)}")
+    
+    # No se encontró la sección
+    return ""
 
 def get_section_pattern(section_name: str) -> str:
     """
@@ -393,15 +526,15 @@ def get_section_pattern(section_name: str) -> str:
     
     # Mapear nombre de sección a posibles encabezados
     section_mappings = {
-        "introduccion": ["introducción", "introduccion", "1\\.", "i\\.", "1 "],
-        "objetivos": ["objetivos", "2\\.", "ii\\.", "2 "],
-        "alcance": ["alcance", "3\\.", "iii\\.", "3 "],
-        "metodologia": ["metodología", "metodologia", "4\\.", "iv\\.", "4 "],
-        "plan": ["plan", "cronograma", "5\\.", "v\\.", "5 "],
-        "entregables": ["entregables", "6\\.", "vi\\.", "6 "],
-        "recursos": ["recursos", "7\\.", "vii\\.", "7 "],
-        "riesgos": ["riesgos", "8\\.", "viii\\.", "8 "],
-        "calidad": ["calidad", "9\\.", "ix\\.", "9 "]
+        "introduccion": ["introducción", "introduccion", "1\\.", "i\\.", "1 ", "1\\s+introducción"],
+        "objetivos": ["objetivos", "2\\.", "ii\\.", "2 ", "2\\s+objetivos"],
+        "alcance": ["alcance", "3\\.", "iii\\.", "3 ", "3\\s+alcance", "alcance del trabajo", "alcance del proyecto"],
+        "metodologia": ["metodología", "metodologia", "4\\.", "iv\\.", "4 ", "4\\s+metodología", "enfoque metodológico"],
+        "plan": ["plan", "cronograma", "5\\.", "v\\.", "5 ", "5\\s+plan", "planificación"],
+        "entregables": ["entregables", "6\\.", "vi\\.", "6 ", "6\\s+entregables", "productos a entregar", "deliverables"],
+        "recursos": ["recursos", "7\\.", "vii\\.", "7 ", "7\\s+recursos", "equipo de trabajo", "personal asignado"],
+        "riesgos": ["riesgos", "8\\.", "viii\\.", "8 ", "8\\s+riesgos", "gestión de riesgos", "análisis de riesgos"],
+        "calidad": ["calidad", "9\\.", "ix\\.", "9 ", "9\\s+calidad", "control de calidad", "aseguramiento de calidad"]
     }
     
     # Buscar coincidencias en el mapeo
@@ -414,8 +547,30 @@ def get_section_pattern(section_name: str) -> str:
     if not header_options:
         header_options = [re.escape(section_name)]
     
-    # Construir el patrón de búsqueda
-    header_pattern = "|".join([f"{opt}" for opt in header_options])
+    # Añadir variantes con números
+    # Por ejemplo, si buscamos "entregables", también buscar "6. Entregables", "VI. Entregables", etc.
+    header_variations = []
+    for opt in header_options:
+        # Variante original
+        header_variations.append(opt)
+        
+        # Variante con número y punto
+        header_variations.append(f"\\d+\\.\\s*{opt}")
+        
+        # Variante con número romano
+        header_variations.append(f"[IVXivx]+\\.\\s*{opt}")
+        
+        # Variante con título y subtítulo
+        header_variations.append(f"{opt}\\s*[:-]")
     
-    # Patrón para encontrar la sección y capturar su contenido hasta la siguiente sección
-    return f"(?:##?\\s*|\\b)({header_pattern})(?:[ \t:]+|[ \t]*\\n)([^#]*)(?:##|$)"
+    # Construir el patrón de búsqueda
+    header_pattern = "|".join([f"({opt})" for opt in set(header_variations)])
+    
+    # Patrón para encontrar la sección y su contenido hasta la siguiente sección
+    # Buscamos cualquier encabezado que coincida con nuestras opciones (grupo 1)
+    # y luego capturamos todo el texto hasta el siguiente encabezado o fin del documento (grupo 2)
+    pattern = f"(?:^|\\n)(?:#{{1,3}}\\s*|\\b)({header_pattern})(?:[\\s:]+|\\n)(.*?)(?=\\n(?:#{{1,3}}\\s*|\\b\\d+\\.\\s|\\b[IVXivx]+\\.\\s|\\b(?:{header_pattern}))|$)"
+    
+    logger.debug(f"Patrón generado para sección '{section_name}': {pattern[:100]}...")
+    
+    return pattern

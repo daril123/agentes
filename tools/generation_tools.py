@@ -138,30 +138,36 @@ def get_similar_proposals_context(section_name: str, tdr_info: str) -> str:
         
         # Buscar propuestas similares
         similar_proposals_json = find_similar_proposals(search_params)
-        similar_proposals = json.loads(similar_proposals_json)
         
-        if similar_proposals.get("status") != "success" or not similar_proposals.get("proposals"):
-            logger.info(f"No se encontraron propuestas similares para la sección: {section_name}")
-            return ""
-        
-        # Construir el contexto a partir de las propuestas encontradas
-        context_parts = []
-        for i, prop in enumerate(similar_proposals.get("proposals", [])):
-            if prop.get("section_content"):
-                context_parts.append(
-                    f"### Ejemplo {i+1} - Proyecto: {prop.get('project_name', 'N/A')} (Código: {prop.get('project_code', 'N/A')})\n"
-                    f"{prop.get('section_content', '')}\n"
-                )
-        
-        # Limitar el tamaño total del contexto
-        context = "\n".join(context_parts)
-        if len(context) > 7000:  # Limitar a 7000 caracteres para evitar problemas con el tamaño del prompt
-            context = context[:7000] + "...\n[Contexto truncado por tamaño]"
-        
-        return context
+        try:
+            similar_proposals = json.loads(similar_proposals_json)
+            
+            if similar_proposals.get("status") != "success" or not similar_proposals.get("proposals"):
+                logger.info(f"No se encontraron propuestas similares para la sección: {section_name}")
+                return ""
+            
+            # Construir el contexto a partir de las propuestas encontradas
+            context_parts = []
+            for i, prop in enumerate(similar_proposals.get("proposals", [])):
+                if prop.get("section_content"):
+                    context_parts.append(
+                        f"### Ejemplo {i+1} - Proyecto: {prop.get('project_name', 'N/A')} (Código: {prop.get('project_code', 'N/A')})\n"
+                        f"{prop.get('section_content', '')}\n"
+                    )
+            
+            # Limitar el tamaño total del contexto
+            context = "\n".join(context_parts)
+            if len(context) > 7000:  # Limitar a 7000 caracteres para evitar problemas con el tamaño del prompt
+                context = context[:7000] + "...\n[Contexto truncado por tamaño]"
+            
+            return context
+        except json.JSONDecodeError:
+            logger.warning(f"Error al decodificar respuesta JSON: {similar_proposals_json[:200]}...")
+            return ""  # Retornar cadena vacía en caso de error
+            
     except Exception as e:
         logger.error(f"Error al obtener contexto de propuestas similares: {str(e)}", exc_info=True)
-        return ""
+        return ""  # Retornar cadena vacía en caso de error
 
 @tool
 def combine_sections(params_str: str) -> str:
