@@ -6,6 +6,8 @@ Configuraciones globales para el sistema TDR Agente Multiagente.
 
 import os
 import logging
+
+# Configuración de Telegram
 from dotenv import load_dotenv
 
 # Cargar variables de entorno
