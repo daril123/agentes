@@ -47,7 +47,7 @@ def analyze_tdr(text: str) -> str:
             "- Requisitos técnicos específicos\n"
             "- Criterios de evaluación\n\n"
             "Responde en formato JSON con claves en español.\n\n"
-            f"TDR:\n{text[:10000]}"  # Limitar a los primeros 10000 caracteres
+            f"TDR:\n{text}"  # Limitar a los primeros 10000 caracteres
         )
         
         response = llm.invoke(prompt)
@@ -103,7 +103,7 @@ def generate_index(info: str) -> str:
         prompt = (
             "Con la siguiente información extraída del TDR, genera un índice para la propuesta técnica. "
             "Cada sección debe ser una clave y su valor, una breve descripción de lo que contendrá. "
-            "El índice DEBE incluir obligatoriamente las siguientes secciones según los requisitos del documento PKS-537 RQ-01:\n\n"
+            "El índice DEBE incluir obligatoriamente las siguientes secciones según los requisitos del documento proporcionado:\n\n"
             "1. Introducción y contexto del proyecto\n"
             "2. Objetivos (general y específicos)\n"
             "3. Alcance detallado del trabajo\n"

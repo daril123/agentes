@@ -6,12 +6,16 @@ Configuraciones globales para el sistema TDR Agente Multiagente.
 
 import os
 import logging
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
 
 # Configuración de Telegram
-TELEGRAM_BOT_TOKEN = "8195110973:AAHEkkFWa0LcHHMwmhN3-Hxj9ZzbH4q2ptk"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # Configuración del modelo
-MODEL_NAME = "deepseek-r1:14b"
+MODEL_NAME = os.getenv("MODEL_NAME", "deepseek-r1:14b")
 
 # Sistema de instrucciones para el agente
 SYSTEM_PROMPT = """Eres un sistema multi-agente especializado en analizar Términos de Referencia (TDR) y generar propuestas técnicas profesionales.
