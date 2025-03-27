@@ -62,7 +62,8 @@ def find_similar_proposals(search_params: str) -> str:
         
         # Leer el Excel y buscar propuestas similares
         references = read_reference_excel(excel_path)
-        if not references or references.empty:
+        # Corregido: verificar si references es None o está vacío de forma segura
+        if references is None or (isinstance(references, pd.DataFrame) and references.empty):
             return json.dumps({
                 "status": "error",
                 "message": "No se pudieron cargar referencias del Excel",
